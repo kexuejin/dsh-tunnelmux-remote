@@ -23,6 +23,7 @@ export default defineConfig([
     dts: false,
     sourcemap: true,
     clean: false,
+    outputOptions: { entryFileNames: 'index.js' },
     external: [
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-host-apiproxy',

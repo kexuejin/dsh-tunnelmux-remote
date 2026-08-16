@@ -13,7 +13,7 @@ import type { PairingService, PairingSnapshot } from './pairing.ts'
 export interface RouteDef {
   kind: 'exact' | 'prefix'
   path: string
-  handler(req: IncomingMessage, res: ServerResponse): void
+  handler(req: IncomingMessage, res: ServerResponse): void | Promise<void>
 }
 
 export const PAIR_PATHS = {
