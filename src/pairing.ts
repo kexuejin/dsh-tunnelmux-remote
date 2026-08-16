@@ -109,6 +109,11 @@ export class PairingService {
     this.clock = clock
   }
 
+  /** The device cookie name from the active config. */
+  get cookieName(): string {
+    return this.config.cookieName
+  }
+
   /** The default LAN base URL (first interface; undefined when not reachable). */
   get lanBaseUrl(): string | undefined {
     return this.lanBases.values().next().value
