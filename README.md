@@ -33,7 +33,7 @@ web profile:
 
 ```bash
 cd ~/.dsh/profiles/web
-dsh plugin add github:YOUR_ORG/dsh-tunnelmux-remote   # or link:/path/to/this/repo
+dsh plugin add github:kexuejin/dsh-tunnelmux-remote   # or link:/path/to/this/repo
 ```
 
 Or add to `cordis.patch.yml` manually:
