@@ -15,6 +15,8 @@ import type {} from '@deepseek-ai/dsh-host-apiproxy'
 import type { MobileApiProxy } from './mobile.ts'
 import { PairingService, defaultClock } from './pairing.ts'
 import { TunnelMuxTunnelManager, createTunnelMuxHttpClient } from './tunnelmux.ts'
+
+export { createTunnelMuxHttpClient, TunnelMuxTunnelManager } from './tunnelmux.ts'
 import { lanIPv4Addresses, makePairingRoutes } from './routes.ts'
 import { makeMobileRoutes } from './mobile.ts'
 
