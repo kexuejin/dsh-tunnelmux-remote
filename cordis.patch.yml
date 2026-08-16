@@ -1,0 +1,7 @@
+# dsh-tunnelmux-remote bundle patch: one plugin row mounting BOTH halves —
+# the host side (pairing tokens, device sessions, /api/pair routes, mobile
+# page + /m/api RPC, TunnelMux auto-tunnel) and the browser side (the
+# sidebar QR entry served from client/client.js).
+- insert:
+    - id: tunnelmux-remote
+      name: dsh-tunnelmux-remote
