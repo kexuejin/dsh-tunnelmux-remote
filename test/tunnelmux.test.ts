@@ -214,7 +214,7 @@ describe('TunnelMuxTunnelManager', () => {
 
 describe('createTunnelMuxHttpClient', () => {
   it('sends a Bearer token when configured', async () => {
-    const fetchMock = vi.fn(async () => ({
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => ({
       ok: true,
       status: 200,
       json: async () => ({}),
@@ -224,15 +224,15 @@ describe('createTunnelMuxHttpClient', () => {
     try {
       const client = createTunnelMuxHttpClient('http://127.0.0.1:4765', 'sekret')
       await client.request('/v1/health')
-      const [, init] = fetchMock.mock.calls[0]
-      expect(init.headers.authorization).toBe('Bearer sekret')
+      const init = fetchMock.mock.calls[0][1]
+      expect((init?.headers as Record<string, string>).authorization).toBe('Bearer sekret')
     } finally {
       vi.unstubAllGlobals()
     }
   })
 
   it('uses the base URL verbatim', async () => {
-    const fetchMock = vi.fn(async () => ({
+    const fetchMock = vi.fn(async (_url: string) => ({
       ok: true,
       status: 200,
       json: async () => ({}),

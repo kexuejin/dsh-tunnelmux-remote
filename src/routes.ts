@@ -36,7 +36,7 @@ const ACCEPT_WINDOW_MS = 30_000
 export function lanIPv4Addresses(): string[] {
   return Object.values(networkInterfaces())
     .flat()
-    .filter((iface) => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
+    .filter((iface): iface is NonNullable<typeof iface> => iface !== undefined && iface.family === 'IPv4' && !iface.internal)
     .map((iface) => iface.address)
 }
 

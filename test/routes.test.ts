@@ -28,27 +28,36 @@ function makeExchange(remoteAddress = '127.0.0.1', cookie = '', method = 'POST')
   req.url = '/'
   req.headers = { ...(cookie ? { cookie } : {}) }
   Object.defineProperty(req, 'socket', { value: { remoteAddress }, configurable: true })
-  const res = new EventEmitterLike() as ServerResponse
+  const res = new EventEmitterLike() as unknown as ServerResponse
+  const raw = res as unknown as {
+    statusCode: number
+    headersSent: boolean
+    writeHead(status: number, headers?: Record<string, string | string[]>): unknown
+    setHeader(name: string, value: string | string[]): unknown
+    write(chunk: unknown): boolean
+    end(chunk?: unknown): unknown
+    emit(event: string): void
+  }
   const chunks: Buffer[] = []
-  res.writeHead = (status, headers) => {
-    res.statusCode = status
-    res.headersSent = true
+  raw.writeHead = (status, headers) => {
+    raw.statusCode = status
+    raw.headersSent = true
     if (headers !== undefined) {
       for (const [name, value] of Object.entries(headers)) {
-        res.setHeader(name, value)
+        raw.setHeader(name, value)
       }
     }
     return res
   }
-  res.setHeader = (name: string, value: string | string[]) => {
+  raw.setHeader = (name: string, value: string | string[]) => {
     ;(res as unknown as { _h: Record<string, unknown> })._h ??= {}
     ;(res as unknown as { _h: Record<string, unknown> })._h[name] = value
   }
-  res.write = (chunk: unknown) => {
+  raw.write = (chunk: unknown) => {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
     return true
   }
-  res.end = (chunk?: unknown) => {
+  raw.end = (chunk?: unknown) => {
     if (chunk !== undefined) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
     res.emit('finish')
     return res
