@@ -15,6 +15,15 @@ import type {} from '@deepseek-ai/dsh-host-apiproxy'
 import type { MobileApiProxy } from './mobile.ts'
 import { PairingService, defaultClock } from './pairing.ts'
 import { TunnelMuxTunnelManager, createTunnelMuxHttpClient } from './tunnelmux.ts'
+import {
+  authorityOf,
+  defaultCredentialsPath,
+  ensureTunnelmuxRoutes,
+  expandHome,
+  readBrowserSessionSecret,
+  resolveGateCookies,
+  startDesktopBridge,
+} from './desktop-bridge.ts'
 
 export { createTunnelMuxHttpClient, TunnelMuxTunnelManager } from './tunnelmux.ts'
 import { lanIPv4Addresses, makePairingRoutes } from './routes.ts'
@@ -41,6 +50,18 @@ export const Config = z.object({
   maxDevices: z.number().min(1).max(64).default(4),
   cookieName: z.string().default('dsh_pair'),
   mobileEnterToSend: z.boolean().default(true),
+  desktopBridge: z.boolean().default(true),
+  bridgePort: z.number().min(1024).max(65_535).default(3988),
+  bridgeRedirect: z.string().default('/'),
+  bridgeDays: z.number().min(1).max(30).default(30),
+  registerRoutes: z.boolean().default(true),
+  pairRouteId: z.string().default('deepseek'),
+  pairRoutePrefix: z.string().default('/deepseek'),
+  rootRouteId: z.string().default('dsh-root'),
+  rootRoutePrefix: z.string().default('/'),
+  gateCookie: z.string().default(''),
+  dshHome: z.string().default('~/.dsh'),
+  tunnelmuxStateFile: z.string().default('~/.tunnelmux/state.json'),
 })
 
 /** Presence sweep cadence (a stale device flips to disconnected within two sweeps). */
@@ -59,6 +80,18 @@ const DEFAULTS = {
   maxDevices: 4,
   cookieName: 'dsh_pair',
   mobileEnterToSend: true,
+  desktopBridge: true,
+  bridgePort: 3988,
+  bridgeRedirect: '/',
+  bridgeDays: 30,
+  registerRoutes: true,
+  pairRouteId: 'deepseek',
+  pairRoutePrefix: '/deepseek',
+  rootRouteId: 'dsh-root',
+  rootRoutePrefix: '/',
+  gateCookie: '',
+  dshHome: '~/.dsh',
+  tunnelmuxStateFile: '~/.tunnelmux/state.json',
 }
 
 /**
@@ -80,6 +113,18 @@ export function apply(ctx: Context, config: Partial<typeof DEFAULTS> = {}): void
     maxDevices: config.maxDevices ?? DEFAULTS.maxDevices,
     cookieName: config.cookieName ?? DEFAULTS.cookieName,
     mobileEnterToSend: config.mobileEnterToSend ?? DEFAULTS.mobileEnterToSend,
+    desktopBridge: config.desktopBridge ?? DEFAULTS.desktopBridge,
+    bridgePort: config.bridgePort ?? DEFAULTS.bridgePort,
+    bridgeRedirect: config.bridgeRedirect ?? DEFAULTS.bridgeRedirect,
+    bridgeDays: config.bridgeDays ?? DEFAULTS.bridgeDays,
+    registerRoutes: config.registerRoutes ?? DEFAULTS.registerRoutes,
+    pairRouteId: config.pairRouteId ?? DEFAULTS.pairRouteId,
+    pairRoutePrefix: config.pairRoutePrefix ?? DEFAULTS.pairRoutePrefix,
+    rootRouteId: config.rootRouteId ?? DEFAULTS.rootRouteId,
+    rootRoutePrefix: config.rootRoutePrefix ?? DEFAULTS.rootRoutePrefix,
+    gateCookie: config.gateCookie ?? DEFAULTS.gateCookie,
+    dshHome: config.dshHome ?? DEFAULTS.dshHome,
+    tunnelmuxStateFile: config.tunnelmuxStateFile ?? DEFAULTS.tunnelmuxStateFile,
   }
 
   const service = new PairingService({
@@ -107,8 +152,9 @@ export function apply(ctx: Context, config: Partial<typeof DEFAULTS> = {}): void
   }
 
   // TunnelMux adapter: owns the tunnel only when autoTunnel is enabled.
+  const tunnelmuxClient = createTunnelMuxHttpClient(resolved.tunnelmuxBaseUrl, resolved.tunnelmuxApiToken || undefined)
   const tunnel = new TunnelMuxTunnelManager(
-    createTunnelMuxHttpClient(resolved.tunnelmuxBaseUrl, resolved.tunnelmuxApiToken || undefined),
+    tunnelmuxClient,
     {
       tunnelId: 'dsh-remote',
       provider: resolved.tunnelProvider,
@@ -167,6 +213,79 @@ export function apply(ctx: Context, config: Partial<typeof DEFAULTS> = {}): void
       tunnel.dispose()
     }
   }, 'tunnelmux-remote: pairing surface')
+
+  // Desktop pairing bridge: a loopback-only issuer of DSH browser-session
+  // cookies (the persistent-secret flow of the former standalone dsh-web-cookie
+  // tool), plus idempotent TunnelMux route registration for the public entry
+  // points. The listener MUST stay behind an access-gated proxy route.
+  ctx.effect(() => {
+    if (!resolved.enabled || !resolved.desktopBridge) return () => {}
+    let secret: Buffer
+    try {
+      secret = readBrowserSessionSecret(defaultCredentialsPath(resolved.dshHome))
+    } catch (error) {
+      console.error('tunnelmux-remote: desktop bridge disabled —', error instanceof Error ? error.message : error)
+      return () => {}
+    }
+    const currentAuthorities = () => {
+      const list = new Set<string>()
+      const target = authorityOf(resolved.targetUrl)
+      if (target !== undefined) list.add(target)
+      const publicUrl = resolved.publicBaseUrl.trim() !== '' ? resolved.publicBaseUrl : tunnel.info.url
+      const publicAuthority = publicUrl === undefined ? undefined : authorityOf(publicUrl)
+      if (publicAuthority !== undefined) list.add(publicAuthority)
+      return [...list]
+    }
+    let bridge
+    try {
+      bridge = startDesktopBridge({
+        port: resolved.bridgePort,
+        authorities: currentAuthorities,
+        secret,
+        days: resolved.bridgeDays,
+        cookiePath: '/',
+        redirect: resolved.bridgeRedirect,
+        gateCookies: resolveGateCookies(
+          resolved.tunnelmuxStateFile,
+          [resolved.pairRouteId, resolved.rootRouteId],
+          resolved.gateCookie,
+        ),
+      })
+    } catch (error) {
+      console.error('tunnelmux-remote: desktop bridge failed to start —', error instanceof Error ? error.message : error)
+      return () => {}
+    }
+    console.info(`tunnelmux-remote: desktop bridge on http://127.0.0.1:${String(resolved.bridgePort)}/ -> ${resolved.bridgeRedirect}`)
+    if (resolved.registerRoutes) {
+      void ensureTunnelmuxRoutes(tunnelmuxClient, [
+        {
+          id: resolved.pairRouteId,
+          matchPathPrefix: resolved.pairRoutePrefix,
+          stripPathPrefix: resolved.pairRoutePrefix,
+          upstreamUrl: `http://127.0.0.1:${String(resolved.bridgePort)}`,
+        },
+        {
+          id: resolved.rootRouteId,
+          matchPathPrefix: resolved.rootRoutePrefix,
+          stripPathPrefix: null,
+          upstreamUrl: resolved.targetUrl,
+        },
+      ]).then((result) => {
+        if (result.ok) {
+          const touched = [
+            ...result.registered.map((id) => `+${id}`),
+            ...result.updated.map((id) => `~${id}`),
+          ]
+          if (touched.length > 0) console.info(`tunnelmux-remote: routes synced (${touched.join(' ')})`)
+        } else {
+          console.warn(`tunnelmux-remote: route sync deferred — ${result.reason ?? 'unknown'} (routes persist in daemon state; they apply once the control plane is unlocked)`)
+        }
+      })
+    }
+    return () => {
+      void bridge.close()
+    }
+  }, 'tunnelmux-remote: desktop bridge')
 
   // Optional settings namespace for live tuning (skip when absent).
   ctx.inject(['settings'], (sctx) => {
