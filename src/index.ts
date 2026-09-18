@@ -22,8 +22,8 @@ import { makeMobileRoutes } from './mobile.ts'
 
 export const name = 'tunnelmux-remote'
 
-/** Services required before the pairing surfaces can mount. */
-export const inject = ['webServer', 'apiProxy']
+/** Services required before the pairing surfaces can mount (apiProxy is probed at runtime). */
+export const inject = ['webServer']
 
 /** Settings namespace of the remote-control capability. */
 export const REMOTE_SETTINGS_NAMESPACE = 'tunnelmux-remote'
@@ -118,15 +118,7 @@ export function apply(ctx: Context, config: Partial<typeof DEFAULTS> = {}): void
   )
 
   const lanAddresses = () => service.lanAddresses
-  const routes = [
-    ...makePairingRoutes({ service, lanAddresses }),
-    ...makeMobileRoutes({
-      service,
-      apiProxy: ctx.apiProxy as unknown as MobileApiProxy,
-      lanAddresses,
-      mobileEnterToSend: () => resolved.mobileEnterToSend,
-    }),
-  ]
+  const routes = [...makePairingRoutes({ service, lanAddresses })]
 
   const applyRoutes = () => {
     for (const route of routes) {
@@ -137,6 +129,22 @@ export function apply(ctx: Context, config: Partial<typeof DEFAULTS> = {}): void
   ctx.effect(() => {
     if (!resolved.enabled) return () => {}
     applyRoutes()
+    // The mobile surface is optional: it needs the apiProxy service, which not
+    // every profile provides. Detecting it at runtime (instead of declaring an
+    // inject) keeps the fiber from pending forever and failing the boot.
+    const apiProxy = (ctx as unknown as { get(name: string): unknown }).get('apiProxy')
+    if (apiProxy !== undefined) {
+      for (const route of makeMobileRoutes({
+        service,
+        apiProxy: apiProxy as MobileApiProxy,
+        lanAddresses,
+        mobileEnterToSend: () => resolved.mobileEnterToSend,
+      })) {
+        ctx.webServer.register(route)
+      }
+    } else {
+      console.info('tunnelmux-remote: apiProxy service not present — mobile surface (/m) disabled; desktop pairing bridge and QR panel stay active')
+    }
     const sweep = setInterval(() => service.sweep(), SWEEP_INTERVAL_MS)
     if (resolved.autoTunnel) {
       tunnel.onStatus(() => {
